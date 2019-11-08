@@ -1,6 +1,8 @@
 SECTION .data
 SECTION .text
 global _maxofthree
+
+
 _maxofthree:
     mov eax,[esp+4]
     mov ecx,[esp+8]
