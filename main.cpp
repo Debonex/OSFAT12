@@ -1,13 +1,15 @@
 #include <iostream>
 using namespace std;
 extern "C"{
-    int maxofthree(int,int,int);
-    void aprint();
-    void aprintRed();
+    void aprint(char*,int);
+    void aprintRed(char*,int);
 }
 int main(){
-    cout << maxofthree(1,2,3) << endl;
-    aprint();
-    aprintRed();
+    //data
+    char str[] = "Hello,World!";
+
+    //text
+    aprint(str,sizeof(str));
+    aprintRed(str,sizeof(str));
     return 0;
 }

@@ -12,6 +12,9 @@ extern _SetConsoleTextAttribute@8
 
 _aprint:
 
+    mov     ecx,[esp+4]
+    mov     edx,[esp+8]
+
     ; hStdOut = GetstdHandle( STD_OUTPUT_HANDLE)
     push    -11
     call    _GetStdHandle@4
@@ -20,8 +23,8 @@ _aprint:
     ; WriteFile( hstdOut, message, length(message), &bytes, 0);
     push    0
     push    0
-    push    (message_end - message)
-    push    message
+    push    edx
+    push    ecx
     push    ebx
     call    _WriteFile@20
     
@@ -29,20 +32,25 @@ _aprint:
 
 _aprintRed:
 
+    mov     ecx,[esp+4]
+    mov     edx,[esp+8]
+
     ; hStdOut = GetstdHandle( STD_OUTPUT_HANDLE)
     push    -11
     call    _GetStdHandle@4
     mov     ebx, eax   
 
+    pusha
     push    4   ;red
     push    ebx
     call    _SetConsoleTextAttribute@8
+    popa
 
     ; WriteFile( hstdOut, message, length(message), &bytes, 0);
     push    0
     push    0
-    push    (message_end - message)
-    push    message
+    push    edx
+    push    ecx
     push    ebx
     call    _WriteFile@20
     
