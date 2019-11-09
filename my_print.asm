@@ -1,13 +1,10 @@
 section .data
-message:    db  'Hello,World',10h
-message_end:
 
 section .text
 global _aprint
 global _aprintRed
 extern _GetStdHandle@4
 extern _WriteFile@20
-extern _ExitProcess@4
 extern _SetConsoleTextAttribute@8
 
 _aprint:
