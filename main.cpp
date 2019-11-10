@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string.h>
 #include <string>
+#include <vector>
 using namespace std;
 extern "C"{
     void aprint(const char*,int);
@@ -9,9 +10,9 @@ typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
 
-static int COLOR_RED = 4;
-static int COLOR_WHITE = 7;
-static int COLOR_GREEN = 2;
+static const int COLOR_RED = 4;
+static const int COLOR_WHITE = 7;
+static const int COLOR_GREEN = 2;
 
 int  BytsPerSec;	        //每扇区字节数
 int  SecPerClus;	        //每簇扇区数
@@ -29,7 +30,7 @@ struct BPB{
     u8 BPB_SecPerClus;      //每簇的扇区数;1
     u16 BPB_ResvdSecCnt;    //Boot记录占用的扇区数;1
     u8 BPB_NumFATs;         //FAT表的记录数;2
-    u16 BPB_RootEntCnt;     /** 根目录最大文件数;0xE0 **/
+    u16 BPB_RootEntCnt;     //根目录最大文件数;0xE0
     u16 BPB_TotSec16;       //逻辑扇区总数;0xB40
     u8 BPB_Media;           //媒体描述符;0xF0
     u16 BPB_FATSz16;        //每个FAT占用扇区数;9
@@ -51,220 +52,196 @@ struct RootEntry {
 
 #pragma pack ()
 
-void fillBPB(FILE* FAT12,BPB* bpb_ptr);                             //载入BPB
-void printFiles(FILE * fat12 , struct RootEntry* rootEntry_ptr);	//打印文件名，这个函数在打印目录时会调用下面的printChildren
-void printChildren(FILE * fat12 , char * directory,int startClus);	//打印目录及目录下子文件名
-int  getFATValue(FILE * fat12 , int num);	                        //读取num号FAT项所在的两个字节，并从这两个连续字节中取出FAT项的值，
-void printRoot(FILE* fat12, RootEntry* rep);
+void fillBPB(FILE* FAT12,BPB* bpb_ptr);                             	//从fat12读取BPB信息。
+void fillRootEntry(FILE* fat12, RootEntry* rep, int base, int offset);	//从fat12读取RootEntry信息。
+void fillContent(FILE *fat12, void *p, int start, int size);			//从fat12读取信息。
+int  getFATValue(FILE * fat12 , int num);	                        	//读取num号FAT项所在的两个字节，并从这两个连续字节中取出FAT项的值，
+void printRoot(FILE* fat12, RootEntry* rep);							//打印fat12文件系统的根目录和其子目录
+void printSub(FILE *fat12,const char *fpath, int startClus);			//打印一个子目录（非根目录）
+bool isValidEntry(RootEntry *rep);
 
+static char PATH_IMG[] = "ref.img";
 static char MSG_TEST[] = "test succeed!\n";
-static char MSG_UNRECOGNIZED_ORDER[] = "Unrecognized input. Usages:\n1. ls [-l] [directory_path]\n2. cat file_path\n";
+static char MSG_QUIT[] = "quit successfully!\n";
+static char MSG_UNRECOGNIZED_ORDER[] = "Unrecognized input. Usages:\n1. ls [-l [directory_path]]\n2. cat <file>\n3. quit\n";
+static char MSG_IMG_WRONG[] = "something wrong with img file.\n";
+static char MSG_CIRCULAR_CLUSTER[] = "Read failure.Circular cluster.\n";
 
 int main(){
 
-    FILE* fat12;
-    fat12 = fopen("ref.img","rb");
+	FILE *fat12;
+	fat12 = fopen(PATH_IMG, "rb");
 
-    BPB bpb;
-    BPB* bpb_ptr = &bpb;
-    RootEntry rootEntry;
-    RootEntry* rootEntry_ptr = &rootEntry;
-    string input;
+	BPB bpb;
+	BPB *bpb_ptr = &bpb;
+	RootEntry rootEntry;
+	RootEntry *rep = &rootEntry;
+	string input;
 
+	//读取BPB信息
+	fillBPB(fat12, bpb_ptr);
 
-    fillBPB(fat12,bpb_ptr);
+	BytsPerSec = bpb_ptr->BPB_BytsPerSec;
+	SecPerClus = bpb_ptr->BPB_SecPerClus;
+	RsvdSecCnt = bpb_ptr->BPB_ResvdSecCnt;
+	NumFATs = bpb_ptr->BPB_NumFATs;
+	RootEntCnt = bpb_ptr->BPB_RootEntCnt;
+	FATSz = (bpb_ptr->BPB_FATSz16 == 0) ? bpb_ptr->BPB_TotSec32 : bpb_ptr->BPB_FATSz16;
 
-    BytsPerSec = bpb_ptr->BPB_BytsPerSec;
-    SecPerClus = bpb_ptr->BPB_SecPerClus;
-    RsvdSecCnt = bpb_ptr->BPB_ResvdSecCnt;
-    NumFATs = bpb_ptr->BPB_NumFATs;
-    RootEntCnt = bpb_ptr->BPB_RootEntCnt;
-    FATSz = (bpb_ptr->BPB_FATSz16==0)?bpb_ptr->BPB_TotSec32:bpb_ptr->BPB_FATSz16;
-
-    while(true){
+	while(true){
         getline(cin,input);
 
         //ls;
         if(input.compare("ls")==0){
-            printFiles(fat12,rootEntry_ptr);
-            continue;
+			printRoot(fat12, rep);
+			continue;
         }
+		//quit;
+		if(input.compare("quit")==0){
+			break;
+		}
         //ls **;
         if(input.substr(0,3).compare("ls ")==0){
-            printRoot(fat12,rootEntry_ptr);
-        }
+			printRoot(fat12, rep);
+		}
         //cat **;
         else if(input.substr(0,4).compare("cat ")==0){
-            aprint(MSG_TEST,COLOR_WHITE);
-        }
+			aprint(MSG_TEST, COLOR_WHITE);
+		}
 		else {
-			aprint(MSG_UNRECOGNIZED_ORDER,COLOR_GREEN);
+			aprint(MSG_UNRECOGNIZED_ORDER, COLOR_GREEN);
 		}
     }
 
-
-    printFiles(fat12,rootEntry_ptr);
-
-    fclose(fat12);
-
+	fclose(fat12);
     return 0;
 }
 
 
-/**
- * fill BPB with given fat12.
-**/
-void fillBPB(FILE* fat12,BPB* bpb_ptr){
 
-    const char fseekmsg[] = "fseek in fillBPB failed!";
-    const char freadmsg[] = "fread in fillBPB failed!";
-
-    int check;
-    check = fseek(fat12,11,SEEK_SET);
-    if(check==-1){
-        aprint(fseekmsg,sizeof(fseekmsg));
-    }
-    check = fread(bpb_ptr,1,25,fat12);
-    if(check!=25){
-        aprint(freadmsg,sizeof(freadmsg));
-    }
-}
 
 void printRoot(FILE* fat12, RootEntry* rep){
-    int base = (RsvdSecCnt + NumFATs * FATSz) * BytsPerSec;
-    int check;
-    char rootFileName[13];
-    for(int i=0;i<RootEntCnt;i++){
 
-    }
-
-}
-
-void printFiles(FILE * fat12 , struct RootEntry* rootEntry_ptr) {
-	int base = (RsvdSecCnt + NumFATs * FATSz) * BytsPerSec;	//根目录首字节的偏移数
+    int base = BytsPerSec * (RsvdSecCnt + NumFATs * FATSz);
+	int offset = 0;
 	int check;
-	char realName[12];	                                    //暂存将空格替换成点后的文件名
- 
-	//依次处理根目录中的各个条目
-	int i;
-	for (i=0;i<RootEntCnt;i++) {
- 
-		check = fseek(fat12,base,SEEK_SET);
-		if (check == -1) 
-			printf("fseek in printFiles failed!");
- 
-		check = fread(rootEntry_ptr,1,32,fat12);
-		if (check != 32)
-			printf("fread in printFiles failed!");
- 
-		base += 32;
- 
-		if (rootEntry_ptr->DIR_Name[0] == '\0') continue;	//空条目不输出
- 
-		//过滤非目标文件
-		int j;
-		int boolean = 0;
-		for (j=0;j<11;j++) {
-			if (!(((rootEntry_ptr->DIR_Name[j] >= 48)&&(rootEntry_ptr->DIR_Name[j] <= 57)) ||
-				((rootEntry_ptr->DIR_Name[j] >= 65)&&(rootEntry_ptr->DIR_Name[j] <= 90)) ||
-					((rootEntry_ptr->DIR_Name[j] >= 97)&&(rootEntry_ptr->DIR_Name[j] <= 122)) ||
-						(rootEntry_ptr->DIR_Name[j] == ' '))) {
-				boolean = 1;	//非英文及数字、空格
-				break;
-			}
-		}
-		if (boolean == 1) continue;	//非目标文件不输出
- 
-		int k;
-		if ((rootEntry_ptr->DIR_Attr&0x10) == 0 ) {
-			//文件
-			int tempLong = -1;
-			for (k=0;k<11;k++) {
-				if (rootEntry_ptr->DIR_Name[k] != ' ') {
-					tempLong++;
-					realName[tempLong] = rootEntry_ptr->DIR_Name[k];
-				} else {
-					tempLong++;
-					realName[tempLong] = '.';
-					while (rootEntry_ptr->DIR_Name[k] == ' ') k++;
-					k--;
+    char fileName[12];
+	int tempi;
+	int fcount = 0;		//文件数量
+	int dcount = 0;		//文件夹数量
+	vector<int> directoryIndexList = vector<int>();
+	vector<string> directoryNameList = vector<string>();
+	char rootpath[] = "/";
+
+	aprint("/:\n",COLOR_WHITE);
+
+    for(int i=0;i<RootEntCnt;i++){
+		//从img读取rootEntry信息
+		offset = 32 * i;
+		fillRootEntry(fat12, rep, base, offset);
+
+		//跳过空条目
+		if (rep->DIR_Name[0] == '\0')
+			continue;
+
+		//输出根目录下文件夹名和文件名
+		if ((rep->DIR_Attr & 0x10) == 0){			//文件
+			fcount++;
+			tempi = 0;
+			for (int j = 0; j < 8; j++){
+				if (rep->DIR_Name[j] != ' '){
+					fileName[tempi++] = rep->DIR_Name[j];
 				}
-			}
-			tempLong++;
-			realName[tempLong] = '\0';	//到此为止，把文件名提取出来放到了realName里
- 
-			//输出文件
-			printf("%s\n",realName);
-		} else {
-			//目录
-			int tempLong = -1;
-			for (k=0;k<11;k++) {
-				if (rootEntry_ptr->DIR_Name[k] != ' ') {
-					tempLong++;
-					realName[tempLong] = rootEntry_ptr->DIR_Name[k];
-				} else {
-					tempLong++;
-					realName[tempLong] = '\0';
+				else
 					break;
+			}
+			if (rep->DIR_Name[8] != ' '){
+				fileName[tempi++] = '.';
+				for (int j = 8; j < 11; j++){
+					if (rep->DIR_Name[j] != ' '){
+						fileName[tempi++] = rep->DIR_Name[j];
+					}
+					else
+						break;
 				}
-			}	//到此为止，把目录名提取出来放到了realName
- 
-			//输出目录及子文件
-			printChildren(fat12,realName,rootEntry_ptr->DIR_FstClus);
+			}
+			fileName[tempi] = '\0';
+			aprint(fileName, COLOR_WHITE);
+			aprint("  ", COLOR_WHITE);
 		}
+		else{									//目录
+			tempi = 0;
+			dcount++;
+			for (int j = 0; j < 11; j++){
+				if (rep->DIR_Name[j] != ' '){
+					fileName[tempi++] = rep->DIR_Name[j];
+				}
+				else
+					break;
+			}
+			fileName[tempi] = '\0';
+			aprint(fileName, COLOR_RED);
+			aprint("  ", COLOR_WHITE);
+			directoryIndexList.push_back(i);
+			string temps = fileName;
+			temps = "/" + temps + "/";
+			directoryNameList.push_back(temps);
+		}		
 	}
+	if (fcount + dcount > 0)
+		aprint("\n", COLOR_WHITE);
+
+	//遍历根目录下的文件夹
+	for (int i = 0; i < directoryIndexList.size(); i++){
+		offset = directoryIndexList[i] * 32;
+		fillRootEntry(fat12, rep, base, offset);
+		printSub(fat12, directoryNameList[i].c_str(), rep->DIR_FstClus);
+	}	
 }
- 
- 
- 
-void printChildren(FILE * fat12 , char * directory , int startClus) {
+
+void printSub(FILE *fat12,const char *fullName, int startClus){
 	//数据区的第一个簇（即2号簇）的偏移字节
-	int dataBase = BytsPerSec * ( RsvdSecCnt + FATSz*NumFATs + (RootEntCnt*32 + BytsPerSec - 1)/BytsPerSec );
-	char fullName[24];	//存放文件路径及全名
-	int strLength = strlen(directory);
-	strcpy(fullName,directory);
-	fullName[strLength] = '/';
-	strLength++;
-	fullName[strLength] = '\0';
-	char* fileName = &fullName[strLength];
- 
+	//公式之所以在分子上加上(BPB_BytsPerSec–1)，是为了保证根目录区没有填满整数个扇区时仍然适用。
+	int dataBase = BytsPerSec * (RsvdSecCnt + FATSz * NumFATs + (RootEntCnt * 32 + BytsPerSec - 1) / BytsPerSec);
+
+	RootEntry *rep;
+	int offset;
+	int tempi;
+	char fileName[12];
+	vector<int> directoryIndexList = vector<int>();
+	vector<string> directoryNameList = vector<string>();
+	int counts[] = {0, 0, 0};
+
 	int currentClus = startClus;
 	int value = 0;
-	int ifOnlyDirectory = 0;
-	 while (value < 0xFF8) {
+	aprint(fullName, COLOR_WHITE);
+	aprint(":\n", COLOR_WHITE);
+	aprint(".  ..  ", COLOR_RED);
+
+	while(value<0xFF8){
 		value = getFATValue(fat12,currentClus);
-		if (value == 0xFF7) {
-			printf("坏簇，读取失败!\n");
+		if (value == 0xFF7){													//环簇
+			aprint(MSG_CIRCULAR_CLUSTER, COLOR_RED);
 			break;
 		}
- 
-		char* str = (char* )malloc(SecPerClus*BytsPerSec);	//暂存从簇中读出的数据
-		char* content = str;
-		
-		int startByte = dataBase + (currentClus - 2)*SecPerClus*BytsPerSec;
-		int check;
-		check = fseek(fat12,startByte,SEEK_SET);
-		if (check == -1) 
-			printf("fseek in printChildren failed!");
- 
-		check = fread(content,1,SecPerClus*BytsPerSec,fat12);
-		if (check != SecPerClus*BytsPerSec)
-			printf("fread in printChildren failed!");
- 
-		//解析content中的数据,依次处理各个条目,目录下每个条目结构与根目录下的目录结构相同
-		int count = SecPerClus*BytsPerSec;	//每簇的字节数
-		int loop = 0;
-		while (loop < count) {
-			int i;
-			char tempName[12];	//暂存替换空格为点后的文件名
-			if (content[loop] == '\0') {
-				loop += 32;
+		int bytesPerClus = SecPerClus * BytsPerSec;								//每簇的字节数
+		int entPerClus = bytesPerClus / 32;										//每簇的条目数	
+		int base = dataBase + (currentClus - 2) * SecPerClus * BytsPerSec;		//簇开始的位置
+
+		char *clusData = (char *)malloc(bytesPerClus);
+		fillContent(fat12, clusData, base, bytesPerClus);
+		char *content = clusData;
+
+		for (int i = 0; i < entPerClus; i++){
+
+			memset(fileName, 0, strlen(fileName));
+			offset = 32 * i;
+
+			if (content[offset] == '\0')
 				continue;
-			}	//空条目不输出
-			//过滤非目标文件
-			int j;
+
 			int boolean = 0;
-			for (j=loop;j<loop+11;j++) {
+			for (int j=offset;j<offset+11;j++) {
 				if (!(((content[j] >= 48)&&(content[j] <= 57)) ||
 					((content[j] >= 65)&&(content[j] <= 90)) ||
 							((content[j] >= 97)&&(content[j] <= 122)) ||
@@ -274,41 +251,63 @@ void printChildren(FILE * fat12 , char * directory , int startClus) {
 				}	
 			}
 			if (boolean == 1) {
-				loop += 32;
 				continue;
 			}	//非目标文件不输出
-			int k;
-			int tempLong = -1;
-			for (k=0;k<11;k++) {
-				if (content[loop+k] != ' ') {
-					tempLong++;
-					tempName[tempLong] = content[loop+k];
-				} else {
-					tempLong++;
-					tempName[tempLong] = '.';
-					while (content[loop+k] == ' ') k++;
-					k--;
+
+			if (content[offset + 11] != 16){			//文件
+				counts[1]++;
+				tempi = 0;
+				for (int j = 0; j < 8; j++){
+					if (content[offset + j] != ' '){
+						fileName[tempi++] = content[offset + j];
+					}else{
+						break;
+					}
 				}
+				if(content[offset+8]!=' '){
+					fileName[tempi++] = '.';
+					for (int j = 8; j < 11; j++){
+						if (content[offset + j] != ' ')
+							fileName[tempi++] = content[offset + j];
+						else
+							break;
+					}
+				}
+				fileName[tempi] = '\0';
+				aprint(fileName, COLOR_WHITE);
+				aprint("  ", COLOR_WHITE);
 			}
-			tempLong++;
-			tempName[tempLong] = '\0';	//到此为止，把文件名提取出来放到tempName里
- 
-			strcpy(fileName,tempName);
-			printf("%s\n",fullName);
-			ifOnlyDirectory = 1;
-			loop += 32;
+			else{										//文件夹
+				counts[0]++;
+				tempi = 0;
+				for (int j = 0; j < 11; j++){
+					if (content[offset + j] != ' '){
+						fileName[tempi++] = content[offset + j];
+					}else{
+						break;
+					}
+				}
+				fileName[tempi] = '\0';
+				aprint(fileName, COLOR_RED);
+				aprint("  ", COLOR_WHITE);
+				directoryIndexList.push_back(i);
+				string temps = fileName;
+				temps = "/" + temps + "/";
+				directoryNameList.push_back(temps);
+			}
 		}
- 
-		free(str);
- 
-		currentClus = value;
-	};
- 
-	 if (ifOnlyDirectory == 0) 
-		 printf("%s\n",fullName);	//空目录的情况下，输出目录
+		counts[2] = content[offset + 26] << 4 + content[offset + 27];
+	}
+
+	aprint("\n", COLOR_WHITE);
+	currentClus = value;
+	for (int i = 0; i < directoryIndexList.size(); i++){
+		offset = directoryIndexList[i] * 32;
+		printSub(fat12, directoryNameList[i].c_str(), counts[2]);
+	}
+	
 }
- 
- 
+
 int  getFATValue(FILE * fat12 , int num) {
 	//FAT1的偏移字节
 	int fatBase = RsvdSecCnt * BytsPerSec;
@@ -324,21 +323,59 @@ int  getFATValue(FILE * fat12 , int num) {
  
 	//先读出FAT项所在的两个字节
 	u16 bytes;
-	u16* bytes_ptr = &bytes;
+	u16 *bytes_ptr = &bytes;
 	int check;
-	check = fseek(fat12,fatPos,SEEK_SET);
-	if (check == -1) 
+	check = fseek(fat12, fatPos, SEEK_SET);
+	if (check == -1)
 		printf("fseek in getFATValue failed!");
- 
-	check = fread(bytes_ptr,1,2,fat12);
+
+	check = fread(bytes_ptr, 1, 2, fat12);
 	if (check != 2)
 		printf("fread in getFATValue failed!");
- 
+
 	//u16为short，结合存储的小尾顺序和FAT项结构可以得到
 	//type为0的话，取byte2的低4位和byte1构成的值，type为1的话，取byte2和byte1的高4位构成的值
 	if (type == 0) {
-		return bytes<<4;
+		return bytes << 4;
 	} else {
-		return bytes>>4;
+		return bytes >> 4;
 	}
+}
+
+// 从fat12读取RootEntry信息
+void fillRootEntry(FILE *fat12, RootEntry *rep, int base, int offset){
+	fillContent(fat12, rep, base + offset, 32);
+}
+
+// 从fat12读取BPB信息。
+void fillBPB(FILE* fat12,BPB* bpb_ptr){
+	fillContent(fat12, bpb_ptr, 11, 25);
+}
+
+// 从fat12读取信息。
+void fillContent(FILE *fat12, void *p, int start, int size){
+	int check;
+	check = fseek(fat12, start, SEEK_SET);	
+	if(check==-1){
+        aprint(MSG_IMG_WRONG, COLOR_RED);
+    }
+	check = fread(p, 1, size, fat12);
+	if(check!=size){
+        aprint(MSG_IMG_WRONG, COLOR_RED);
+    }
+	
+}
+
+bool isValidEntry(RootEntry *rep){
+	bool res = true;
+	for (int j=0;j<11;j++) {
+		if (!(((rep->DIR_Name[j] >= 48)&&(rep->DIR_Name[j] <= 57)) ||
+			((rep->DIR_Name[j] >= 65)&&(rep->DIR_Name[j] <= 90)) ||
+				((rep->DIR_Name[j] >= 97)&&(rep->DIR_Name[j] <= 122)) ||
+					(rep->DIR_Name[j] == ' '))) {
+			res = false; //非英文及数字、空格
+			break;
+		}
+	}
+	return res;
 }

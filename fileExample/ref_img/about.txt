@@ -1,0 +1,1 @@
+The Volume Tracker in Windows 95/98/SE/ME will overwrite the OEM label with "?????IHC" signatures (a left-over from "␠OGACIHC" for "Chicago") even on a seemingly read-only disk access (such as a DIR A:) if the medium is not write-protected.
