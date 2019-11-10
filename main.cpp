@@ -58,13 +58,15 @@ void fillContent(FILE *fat12, void *p, int start, int size);			//从fat12读取�
 int  getFATValue(FILE * fat12 , int num);	                        	//读取num号FAT项所在的两个字节，并从这两个连续字节中取出FAT项的值，
 void printRoot(FILE* fat12, RootEntry* rep);							//打印fat12文件系统的根目录和其子目录
 void printSub(FILE *fat12,const char *fpath, int startClus);			//打印一个子目录（非根目录）
-bool isValidEntry(RootEntry *rep);
+vector<string> split(string str,string s);
 
 static char PATH_IMG[] = "ref.img";
 static char MSG_TEST[] = "test succeed!\n";
 static char MSG_QUIT[] = "quit successfully!\n";
+static char MSG_INVALID_PATH[] = "Invalid path.\n";
+static char MSG_INVALID_OPT[] = "Invalid command option.\n";
 static char MSG_UNRECOGNIZED_ORDER[] = "Unrecognized input. Usages:\n1. ls [-l [directory_path]]\n2. cat <file>\n3. quit\n";
-static char MSG_IMG_WRONG[] = "something wrong with img file.\n";
+static char MSG_IMG_WRONG[] = "Something wrong with img file.\n";
 static char MSG_CIRCULAR_CLUSTER[] = "Read failure.Circular cluster.\n";
 
 int main(){
@@ -102,7 +104,52 @@ int main(){
 		}
         //ls **;
         if(input.substr(0,3).compare("ls ")==0){
-			printRoot(fat12, rep);
+			string path = "";
+			bool optl = false;
+			bool isOptValid = true;
+			bool isPathValid = true;
+			vector<string> args = split(input , " ");
+			for (int i = 1; i < args.size(); i++){
+				
+				//指令参数
+				if (args[i][0] == '-'){
+					for (int j = 1; j < args[i].length(); j++){
+						if (args[i][j] == 'l')
+							optl = true;
+						else{
+							isOptValid = false;
+							break;
+						}
+					}
+				}
+				//非指令参数
+				else{
+					if(args[i][0]!='/'){
+						isPathValid = false;
+					}else{
+						if (path.length() == 0)
+							path = input;
+						else
+							isPathValid = false;	//多路径命令无效
+					}
+				}
+			}
+
+			if (optl && isPathValid && isOptValid){
+				aprint(MSG_TEST, COLOR_GREEN);
+			}
+			else if(!optl && isPathValid && isOptValid){
+				aprint(MSG_TEST, COLOR_GREEN);
+			}
+			else if(isPathValid && !isOptValid){
+				aprint(MSG_INVALID_OPT, COLOR_WHITE);
+			}
+			else if (isOptValid && !isPathValid){
+				aprint(MSG_INVALID_PATH, COLOR_WHITE);
+			}
+			else{
+				aprint(MSG_UNRECOGNIZED_ORDER, COLOR_GREEN);
+			}
 		}
         //cat **;
         else if(input.substr(0,4).compare("cat ")==0){
@@ -366,16 +413,19 @@ void fillContent(FILE *fat12, void *p, int start, int size){
 	
 }
 
-bool isValidEntry(RootEntry *rep){
-	bool res = true;
-	for (int j=0;j<11;j++) {
-		if (!(((rep->DIR_Name[j] >= 48)&&(rep->DIR_Name[j] <= 57)) ||
-			((rep->DIR_Name[j] >= 65)&&(rep->DIR_Name[j] <= 90)) ||
-				((rep->DIR_Name[j] >= 97)&&(rep->DIR_Name[j] <= 122)) ||
-					(rep->DIR_Name[j] == ' '))) {
-			res = false; //非英文及数字、空格
-			break;
-		}
+
+vector<string> split(string str, string s) {
+	vector<string> result = vector<string>();
+	int start = 0, end;
+	int slen = s.length();
+	end = str.find(s);
+	while (end != -1) {
+		result.push_back(str.substr(start, end - start));
+		start = end + slen;
+		end = str.find(s, start);
 	}
-	return res;
+	if (start < str.length()) {
+		result.push_back(str.substr(start, str.length() - start));
+	}
+	return result;
 }
