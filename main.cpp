@@ -1,13 +1,17 @@
 #include <iostream>
 #include <string.h>
+#include <string>
 using namespace std;
 extern "C"{
-    void aprint(char*,int);
-    void aprintRed(char*,int);
+    void aprint(const char*,int);
 }
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
+
+static int COLOR_RED = 4;
+static int COLOR_WHITE = 7;
+static int COLOR_GREEN = 2;
 
 int  BytsPerSec;	        //每扇区字节数
 int  SecPerClus;	        //每簇扇区数
@@ -15,6 +19,7 @@ int  RsvdSecCnt;	        //Boot记录占用的扇区数
 int  NumFATs;	            //FAT表个数
 int  RootEntCnt;	        //根目录最大文件数
 int  FATSz;	                //FAT扇区数      
+
 
 #pragma pack (1)
 
@@ -46,23 +51,25 @@ struct RootEntry {
 
 #pragma pack ()
 
-void fillBPB(FILE* FAT12,BPB* bpb_ptr);     //载入BPB
+void fillBPB(FILE* FAT12,BPB* bpb_ptr);                             //载入BPB
 void printFiles(FILE * fat12 , struct RootEntry* rootEntry_ptr);	//打印文件名，这个函数在打印目录时会调用下面的printChildren
 void printChildren(FILE * fat12 , char * directory,int startClus);	//打印目录及目录下子文件名
-int  getFATValue(FILE * fat12 , int num);	//读取num号FAT项所在的两个字节，并从这两个连续字节中取出FAT项的值，
+int  getFATValue(FILE * fat12 , int num);	                        //读取num号FAT项所在的两个字节，并从这两个连续字节中取出FAT项的值，
+void printRoot(FILE* fat12, RootEntry* rep);
 
+static char MSG_TEST[] = "test succeed!\n";
+static char MSG_UNRECOGNIZED_ORDER[] = "Unrecognized input. Usages:\n1. ls [-l] [directory_path]\n2. cat file_path\n";
 
 int main(){
 
-    char testmsg[] = "test succeed!";
-
     FILE* fat12;
-    fat12 = fopen("a.img","rb");
+    fat12 = fopen("ref.img","rb");
 
     BPB bpb;
     BPB* bpb_ptr = &bpb;
     RootEntry rootEntry;
     RootEntry* rootEntry_ptr = &rootEntry;
+    string input;
 
 
     fillBPB(fat12,bpb_ptr);
@@ -74,6 +81,28 @@ int main(){
     RootEntCnt = bpb_ptr->BPB_RootEntCnt;
     FATSz = (bpb_ptr->BPB_FATSz16==0)?bpb_ptr->BPB_TotSec32:bpb_ptr->BPB_FATSz16;
 
+    while(true){
+        getline(cin,input);
+
+        //ls;
+        if(input.compare("ls")==0){
+            printFiles(fat12,rootEntry_ptr);
+            continue;
+        }
+        //ls **;
+        if(input.substr(0,3).compare("ls ")==0){
+            printRoot(fat12,rootEntry_ptr);
+        }
+        //cat **;
+        else if(input.substr(0,4).compare("cat ")==0){
+            aprint(MSG_TEST,COLOR_WHITE);
+        }
+		else {
+			aprint(MSG_UNRECOGNIZED_ORDER,COLOR_GREEN);
+		}
+    }
+
+
     printFiles(fat12,rootEntry_ptr);
 
     fclose(fat12);
@@ -82,10 +111,13 @@ int main(){
 }
 
 
+/**
+ * fill BPB with given fat12.
+**/
 void fillBPB(FILE* fat12,BPB* bpb_ptr){
 
-    char fseekmsg[] = "fseek in fillBPB failed!";
-    char freadmsg[] = "fread in fillBPB failed!";
+    const char fseekmsg[] = "fseek in fillBPB failed!";
+    const char freadmsg[] = "fread in fillBPB failed!";
 
     int check;
     check = fseek(fat12,11,SEEK_SET);
@@ -95,6 +127,15 @@ void fillBPB(FILE* fat12,BPB* bpb_ptr){
     check = fread(bpb_ptr,1,25,fat12);
     if(check!=25){
         aprint(freadmsg,sizeof(freadmsg));
+    }
+}
+
+void printRoot(FILE* fat12, RootEntry* rep){
+    int base = (RsvdSecCnt + NumFATs * FATSz) * BytsPerSec;
+    int check;
+    char rootFileName[13];
+    for(int i=0;i<RootEntCnt;i++){
+
     }
 
 }
