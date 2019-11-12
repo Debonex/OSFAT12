@@ -60,6 +60,9 @@ void fillContent(FILE *fat12, void *p, int start, int size);					//从fat12读�
 int  getFATValue(FILE * fat12 , int num);	                        			//读取num号FAT项所在的两个字节，并从这两个连续字节中取出FAT项的值，
 void printRoot(FILE *fat12, RootEntry *rep, const char *spath, int isDetail); 	//打印fat12文件系统的根目录和其子目录
 void printSub(FILE *fat12, const char *fpath, int startClus, const char *spath, int isDetail); //打印一个子目录（非根目录）
+void catRoot(FILE *fat12, RootEntry *rep, const char *spath, const char *fname);
+void catSub(FILE *fat12, int startClus, const char *fullName, const char *spath, const char *fname);
+void catFile(FILE *fat12, int startClus, int fileSize);
 void directoryOutPut(const char *fpath, vector<string> dlist, vector<string> flist);
 void directoryOutPutDetail(const char *fpath, int dnum, int fnum, vector<string> dlist, vector<string> flist, vector<int> dnlist, vector<int> fnlist, vector<int> fszlist);
 int getdfnum(FILE *fat12, int startClus);										//计算文件夹中的文件夹数和文件数，前16位存文件夹数，后16位存文件数。
@@ -74,6 +77,7 @@ static char MSG_QUIT[] = "quit successfully!\n";
 static char MSG_INVALID_PATH[] = "Invalid path.\n";
 static char MSG_INVALID_OPT[] = "Invalid command option.\n";
 static char MSG_INVALID_DIRECTORY[] = "No such a directory.\n";
+static char MSG_NO_FILE[] = "No such a file.\n";
 static char MSG_UNRECOGNIZED_ORDER[] = "Unrecognized input. Usages:\n1. ls [-l [directory_path]]\n2. cat <file>\n3. quit\n";
 static char MSG_IMG_WRONG[] = "Something wrong with img file.\n";
 static char MSG_CIRCULAR_CLUSTER[] = "Read failure.Circular cluster.\n";
@@ -170,7 +174,26 @@ int main(){
 		}
         //cat **;
         else if(input.substr(0,4).compare("cat ")==0){
-			aprint(MSG_TEST, COLOR_WHITE);
+			string path = "";
+			vector<string> args = split(input," ");
+			bool isPathValid = true;
+			for (int i = 1; i < args.size(); i++){
+				if(args[i].length()>0){
+					if (path.length() == 0)
+						path = args[i];
+					else
+						isPathValid = false;	//多路径命令无效
+				}
+			}
+			if(isPathValid){
+				if (path[0] != '/')
+					path = "/" + path;
+				int idx = path.find_last_of("/");
+				string fname = path.substr(idx+1,path.length()-idx-1);
+				string spath = path.substr(0,idx+1);
+				catRoot(fat12, rep, spath.c_str(), fname.c_str());
+			}	
+			else aprint(MSG_INVALID_PATH, COLOR_WHITE);
 		}
 		else {
 			aprint(MSG_UNRECOGNIZED_ORDER, COLOR_GREEN);
@@ -180,6 +203,132 @@ int main(){
 	fclose(fat12);
     return 0;
 }
+
+void catRoot(FILE *fat12, RootEntry *rep, const char *spath, const char *fname){
+	int base = BytsPerSec * (RsvdSecCnt + NumFATs * FATSz);
+	char fullName[] = "/";
+	bool isSearch = true;			//是否要在该目录下搜索文件
+	bool isFound = false;			//是否搜索到了文件
+	int offset = 0;
+	char fileName[12];
+	int tempi;
+	vector<int> directoryIndexList = vector<int>();
+	vector<string> directoryNameList = vector<string>();
+	vector<int> fileIndexList = vector<int>();
+	vector<string> fileNameList = vector<string>();
+
+	if (strcmp(fullName, spath) != 0) {
+		isSearch = false;
+	}
+
+	//遍历RootEntry
+	for(int i=0;i<RootEntCnt;i++){
+		//从img读取rootEntry信息
+		offset = 32 * i;
+		fillRootEntry(fat12, rep, base, offset);
+		//跳过空条目
+		if (rep->DIR_Name[0] == '\0')
+			continue;
+
+		//输出根目录下文件夹名和文件名
+		if (isSearch && (rep->DIR_Attr & 0x10) == 0){			//文件且搜索目录为根目录
+			tempi = 0;
+			for (int j = 0; j < 8; j++){
+				if (rep->DIR_Name[j] != ' ') fileName[tempi++] = rep->DIR_Name[j];
+				else break;
+			}
+			if (rep->DIR_Name[8] != ' '){
+				fileName[tempi++] = '.';
+				for (int j = 8; j < 11; j++){
+					if (rep->DIR_Name[j] != ' ') fileName[tempi++] = rep->DIR_Name[j];
+					else break;
+				}
+			}
+			fileName[tempi] = '\0';
+			fileIndexList.push_back(i);
+			fileNameList.push_back(fileName);
+		}	
+		else if(!isSearch && (rep->DIR_Attr & 0x10) != 0){			//目录并且搜索路径不是根目录
+			tempi = 0;
+			for (int j = 0; j < 11; j++){
+				if (rep->DIR_Name[j] != ' ') fileName[tempi++] = rep->DIR_Name[j];
+				else break;
+			}
+			fileName[tempi] = '\0';
+			directoryIndexList.push_back(i);
+			directoryNameList.push_back(fileName);
+		}	
+	}
+
+	if(isSearch){
+		for (int i = 0; i < fileNameList.size(); i++){
+			if (fileNameList[i].compare(fname) == 0){
+				isFound = true;
+				offset = fileIndexList[i] * 32;
+				fillRootEntry(fat12, rep, base, offset);
+				catFile(fat12, rep->DIR_FstClus, rep->DIR_FileSize);
+				break;
+			}
+		}
+	}
+	else{
+		for (int i = 0; i < directoryIndexList.size(); i++){
+			offset = directoryIndexList[i] * 32;
+			fillRootEntry(fat12, rep, base, offset);
+			string directoryFullName = fullName + directoryNameList[i] + "/";
+			catSub(fat12, rep->DIR_FstClus, directoryFullName.c_str(), spath, fname);
+		}
+	}
+
+	if(!isFound)aprint(MSG_NO_FILE,COLOR_WHITE);
+}
+
+void catSub(FILE *fat12, int startClus, const char *fullName, const char *spath, const char *fname){
+	cout << "catsub" << endl;
+}
+
+void catFile(FILE *fat12, int startClus, int fileSize){
+	int dataBase = BytsPerSec * (RsvdSecCnt + FATSz * NumFATs + (RootEntCnt * 32 + BytsPerSec - 1) / BytsPerSec);
+
+	int resBytes = fileSize;	//还需要拷贝的字节数
+	char *result = (char *)malloc(fileSize + 1);
+	result[fileSize + 1] = '\0';
+	char *respt = result;
+	int currentClus = startClus;
+	int value = 0;
+
+	while(value<0xFF8){
+		value = getFATValue(fat12,currentClus);
+		if (value == 0xFF7){													//环簇
+			aprint(MSG_CIRCULAR_CLUSTER, COLOR_RED);
+			break;
+		}
+		int base = dataBase + (currentClus - 2) * SecPerClus * BytsPerSec;		//簇开始的位置
+
+		char *clusData = (char *)malloc(BytesPerClus);
+		fillContent(fat12, clusData, base, BytesPerClus);
+		if(resBytes>BytesPerClus){
+			for(int i=0;i<BytesPerClus;i++){
+				respt[i] = clusData[i];
+			}
+			respt = respt + BytesPerClus;
+			resBytes -= BytesPerClus;
+		}
+		else{
+			for(int i=0;i<resBytes;i++){
+				respt[i] = clusData[i];
+			}
+			respt = respt + resBytes;
+			resBytes = 0;
+		}
+
+		currentClus = value;	
+		free(clusData);	
+	}	
+	aprint(result, COLOR_WHITE);
+	free(result);
+}
+
 
 void printRoot(FILE *fat12, RootEntry *rep, const char *spath, int isDetail){
 
@@ -198,11 +347,12 @@ void printRoot(FILE *fat12, RootEntry *rep, const char *spath, int isDetail){
 	vector<string> fileNameList = vector<string>();
 	vector<int> fileSizeList = vector<int>();
 
+
 	//fullName != spath && fullName != spath+"/"
 	if ((strcmp(fullName, spath) != 0) && (string(fullName).compare(string(spath) + "/")) != 0)	{
 		if (isFatherPath(fullName, spath)){
 			isPrint = false;
-		}
+		}		
 		else{
 			aprint(MSG_INVALID_DIRECTORY, COLOR_WHITE);
 			return;
@@ -370,6 +520,7 @@ void printSub(FILE *fat12, const char *fullName, int startClus, const char *spat
 				directoryIndexList.push_back(i);
 				directoryNameList.push_back(fileName);
 				counts[2] = (int)content[offset + 26];
+				counts[2] += (int)content[offset + 27];
 				directoryClusList.push_back(counts[2]);
 			}
 		}
@@ -433,9 +584,9 @@ int  getFATValue(FILE * fat12 , int num) {
 	//u16为short，结合存储的小尾顺序和FAT项结构可以得到
 	//type为0的话，取byte2的低4位和byte1构成的值，type为1的话，取byte2和byte1的高4位构成的值
 	if (type == 0) {
-		return bytes << 4;
+		return ((int)(bytes & 0X0FFF)) & 0x0000ffff;
 	} else {
-		return bytes >> 4;
+		return ((int)(bytes >> 4)) & 0x0000ffff;
 	}
 }
 
