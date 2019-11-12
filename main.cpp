@@ -66,12 +66,14 @@ int getdfnum(FILE *fat12, int startClus);										//计算文件夹中的文件
 bool isValidEntry(char *content,int offset);									//判断从content开始偏移offset的32个字节是否是一个Entry
 vector<string> split(string str,string s);
 void aprintnum(int num, int color);
+bool isFatherPath(const char *fpath, const char *spath);						//判断fpath是否是spath的父目录。
 
 static char PATH_IMG[] = "ref.img";
 static char MSG_TEST[] = "test succeed!\n";
 static char MSG_QUIT[] = "quit successfully!\n";
 static char MSG_INVALID_PATH[] = "Invalid path.\n";
 static char MSG_INVALID_OPT[] = "Invalid command option.\n";
+static char MSG_INVALID_DIRECTORY[] = "No such a directory.\n";
 static char MSG_UNRECOGNIZED_ORDER[] = "Unrecognized input. Usages:\n1. ls [-l [directory_path]]\n2. cat <file>\n3. quit\n";
 static char MSG_IMG_WRONG[] = "Something wrong with img file.\n";
 static char MSG_CIRCULAR_CLUSTER[] = "Read failure.Circular cluster.\n";
@@ -188,6 +190,7 @@ void printRoot(FILE *fat12, RootEntry *rep, const char *spath, int isDetail){
 	int tempi;
 	int counts[2] = {0, 0};		//dcount,fcount
 	char fullName[] = "/";
+	bool isPrint = true;		//是否是搜索目录或搜索目录的子目录
 	vector<int> directoryIndexList = vector<int>();
 	vector<string> directoryNameList = vector<string>();
 	vector<int> directoryDNumList = vector<int>();
@@ -195,7 +198,18 @@ void printRoot(FILE *fat12, RootEntry *rep, const char *spath, int isDetail){
 	vector<string> fileNameList = vector<string>();
 	vector<int> fileSizeList = vector<int>();
 
-    for(int i=0;i<RootEntCnt;i++){
+	//fullName != spath && fullName != spath+"/"
+	if ((strcmp(fullName, spath) != 0) && (string(fullName).compare(string(spath) + "/")) != 0)	{
+		if (isFatherPath(fullName, spath)){
+			isPrint = false;
+		}
+		else{
+			aprint(MSG_INVALID_DIRECTORY, COLOR_WHITE);
+			return;
+		}
+	}
+
+	for(int i=0;i<RootEntCnt;i++){
 		//从img读取rootEntry信息
 		offset = 32 * i;
 		fillRootEntry(fat12, rep, base, offset);
@@ -247,11 +261,13 @@ void printRoot(FILE *fat12, RootEntry *rep, const char *spath, int isDetail){
 	}
 
 	//输出部分
-	if(isDetail==0){
-		directoryOutPut(fullName, directoryNameList, fileNameList);
-	}
-	else{
-		directoryOutPutDetail(fullName, counts[0], counts[1], directoryNameList, fileNameList, directoryDNumList, directoryFNumList, fileSizeList);
+	if(isPrint){
+		if(isDetail==0){
+			directoryOutPut(fullName, directoryNameList, fileNameList);
+		}
+		else{
+			directoryOutPutDetail(fullName, counts[0], counts[1], directoryNameList, fileNameList, directoryDNumList, directoryFNumList, fileSizeList);
+		}
 	}
 	
 
@@ -259,7 +275,7 @@ void printRoot(FILE *fat12, RootEntry *rep, const char *spath, int isDetail){
 	for (int i = 0; i < directoryIndexList.size(); i++){
 		offset = directoryIndexList[i] * 32;
 		fillRootEntry(fat12, rep, base, offset);
-		string directoryFullName = spath + directoryNameList[i] + "/";
+		string directoryFullName = fullName + directoryNameList[i] + "/";
 		printSub(fat12, directoryFullName.c_str(), rep->DIR_FstClus, spath, isDetail);
 	}	
 }
@@ -269,6 +285,7 @@ void printSub(FILE *fat12, const char *fullName, int startClus, const char *spat
 	//公式之所以在分子上加上(BPB_BytsPerSec–1)，是为了保证根目录区没有填满整数个扇区时仍然适用。
 	int dataBase = BytsPerSec * (RsvdSecCnt + FATSz * NumFATs + (RootEntCnt * 32 + BytsPerSec - 1) / BytsPerSec);
 
+	bool isPrint = true;
 	int offset;
 	int tempi;
 	char fileName[12];
@@ -283,6 +300,19 @@ void printSub(FILE *fat12, const char *fullName, int startClus, const char *spat
 
 	int currentClus = startClus;
 	int value = 0;
+
+	//fullName != spath && fullName != spath+"/"
+	if ((strcmp(fullName, spath) != 0) && (string(fullName).compare(string(spath) + "/")) != 0)	{
+		if (isFatherPath(fullName, spath)){
+			isPrint = false;
+		}
+		else if(isFatherPath(spath,fullName)){
+			isPrint = true;
+		}
+		else{
+			return;
+		}
+	}
 
 	while(value<0xFF8){
 		value = getFATValue(fat12,currentClus);
@@ -325,8 +355,9 @@ void printSub(FILE *fat12, const char *fullName, int startClus, const char *spat
 				}
 				fileName[tempi] = '\0';
 				fileNameList.push_back(fileName);
-				int *fszpt = (int *)content + offset + 28;
-				fileSizeList.push_back(*fszpt);
+				int x = (int)content[offset+28];
+				x &= 0x000000ff;
+				fileSizeList.push_back(x);
 			}
 			else{										//文件夹
 				counts[0]++;
@@ -338,10 +369,12 @@ void printSub(FILE *fat12, const char *fullName, int startClus, const char *spat
 				fileName[tempi] = '\0';
 				directoryIndexList.push_back(i);
 				directoryNameList.push_back(fileName);
+				counts[2] = (int)content[offset + 26];
+				directoryClusList.push_back(counts[2]);
 			}
 		}
-		counts[2] = content[offset + 26] << 8 + content[offset + 27];
-		directoryClusList.push_back(counts[2]);
+		
+		free(clusData);
 	}
 
 	if (isDetail == 1){
@@ -353,18 +386,21 @@ void printSub(FILE *fat12, const char *fullName, int startClus, const char *spat
 		}	
 	}
 
-		//输出部分
-	if(isDetail==0){
-		directoryOutPut(fullName, directoryNameList, fileNameList);
-	}
-	else{
-		directoryOutPutDetail(fullName, counts[0], counts[1], directoryNameList, fileNameList, directoryDNumList, directoryFNumList, fileSizeList);
+	//输出部分
+	if(isPrint){
+		if(isDetail==0){
+			directoryOutPut(fullName, directoryNameList, fileNameList);
+		}
+		else{
+			directoryOutPutDetail(fullName, counts[0], counts[1], directoryNameList, fileNameList, directoryDNumList, directoryFNumList, fileSizeList);
+		}
 	}
 
 	currentClus = value;
 	for (int i = 0; i < directoryIndexList.size(); i++){
 		offset = directoryIndexList[i] * 32;
-		printSub(fat12, directoryNameList[i].c_str(), directoryClusList[i], spath, isDetail);
+		string dFullName = fullName + directoryNameList[i] + "/";
+		printSub(fat12, dFullName.c_str(), directoryClusList[i], spath, isDetail);
 	}
 	
 }
@@ -388,11 +424,11 @@ int  getFATValue(FILE * fat12 , int num) {
 	int check;
 	check = fseek(fat12, fatPos, SEEK_SET);
 	if (check == -1)
-		printf("fseek in getFATValue failed!");
+		aprint(MSG_IMG_WRONG, COLOR_RED);
 
 	check = fread(bytes_ptr, 1, 2, fat12);
 	if (check != 2)
-		printf("fread in getFATValue failed!");
+		aprint(MSG_IMG_WRONG,COLOR_RED);
 
 	//u16为short，结合存储的小尾顺序和FAT项结构可以得到
 	//type为0的话，取byte2的低4位和byte1构成的值，type为1的话，取byte2和byte1的高4位构成的值
@@ -505,6 +541,12 @@ void directoryOutPutDetail(const char *fpath, int dnum, int fnum, vector<string>
 	}
 	
 	aprint("\n", COLOR_WHITE);
+}
+
+bool isFatherPath(const char *fpath, const char *spath){
+	if (string(spath).find(string(fpath)) != 0)
+		return false;
+	return true;
 }
 
 bool isValidEntry(char *content,int offset){
