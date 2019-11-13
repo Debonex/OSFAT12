@@ -71,7 +71,7 @@ vector<string> split(string str,string s);
 void aprintnum(int num, int color);
 bool isFatherPath(const char *fpath, const char *spath);						//判断fpath是否是spath的父目录。
 
-static char PATH_IMG[] = "ref.img";
+static char PATH_IMG[] = "a.img";
 static char MSG_TEST[] = "test succeed!\n";
 static char MSG_QUIT[] = "quit successfully!\n";
 static char MSG_INVALID_PATH[] = "Invalid path.\n";
