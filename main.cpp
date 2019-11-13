@@ -59,9 +59,9 @@ void fillRootEntry(FILE* fat12, RootEntry* rep, int base, int offset);			//从fa
 void fillContent(FILE *fat12, void *p, int start, int size);					//从fat12读取信息。
 int  getFATValue(FILE * fat12 , int num);	                        			//读取num号FAT项所在的两个字节，并从这两个连续字节中取出FAT项的值，
 void printRoot(FILE *fat12, RootEntry *rep, const char *spath, int isDetail); 	//打印fat12文件系统的根目录和其子目录
-void printSub(FILE *fat12, const char *fpath, int startClus, const char *spath, int isDetail); //打印一个子目录（非根目录）
+bool printSub(FILE *fat12, const char *fpath, int startClus, const char *spath, int isDetail); //打印一个子目录（非根目录）
 void catRoot(FILE *fat12, RootEntry *rep, const char *spath, const char *fname);
-void catSub(FILE *fat12, int startClus, const char *fullName, const char *spath, const char *fname);
+bool catSub(FILE *fat12, int startClus, const char *fullName, const char *spath, const char *fname);
 void catFile(FILE *fat12, int startClus, int fileSize);
 void directoryOutPut(const char *fpath, vector<string> dlist, vector<string> flist);
 void directoryOutPutDetail(const char *fpath, int dnum, int fnum, vector<string> dlist, vector<string> flist, vector<int> dnlist, vector<int> fnlist, vector<int> fszlist);
@@ -276,15 +276,115 @@ void catRoot(FILE *fat12, RootEntry *rep, const char *spath, const char *fname){
 			offset = directoryIndexList[i] * 32;
 			fillRootEntry(fat12, rep, base, offset);
 			string directoryFullName = fullName + directoryNameList[i] + "/";
-			catSub(fat12, rep->DIR_FstClus, directoryFullName.c_str(), spath, fname);
+			isFound |= catSub(fat12, rep->DIR_FstClus, directoryFullName.c_str(), spath, fname);
 		}
 	}
 
 	if(!isFound)aprint(MSG_NO_FILE,COLOR_WHITE);
 }
 
-void catSub(FILE *fat12, int startClus, const char *fullName, const char *spath, const char *fname){
-	cout << "catsub" << endl;
+bool catSub(FILE *fat12, int startClus, const char *fullName, const char *spath, const char *fname){
+		int dataBase = BytsPerSec * (RsvdSecCnt + FATSz * NumFATs + (RootEntCnt * 32 + BytsPerSec - 1) / BytsPerSec);
+
+		bool isSearch = true;			//是否要在该目录下搜索文件
+		bool isFound = false;			//是否搜索到了文件
+		int offset = 0;
+		char fileName[12];
+		int tempi;
+		vector<int> directoryIndexList = vector<int>();
+		vector<string> directoryNameList = vector<string>();
+		vector<int> directoryClusList = vector<int>();
+		vector<int> fileIndexList = vector<int>();
+		vector<string> fileNameList = vector<string>();
+		vector<int> fileSizeList = vector<int>();
+		vector<int> fileClusList = vector<int>();
+
+		if (strcmp(fullName, spath) != 0)
+			isSearch = false;
+		
+		int currentClus = startClus;
+		int value = 0;
+
+		while(value<0xFF8){
+			value = getFATValue(fat12,currentClus);
+			if (value == 0xFF7){													//环簇
+				aprint(MSG_CIRCULAR_CLUSTER, COLOR_RED);
+				break;
+			}
+
+			int base = dataBase + (currentClus - 2) * SecPerClus * BytsPerSec;		//簇开始的位置
+
+			char *clusData = (char *)malloc(BytesPerClus);
+			fillContent(fat12, clusData, base, BytesPerClus);
+			char *content = clusData;
+
+			for (int i = 0; i < EntPerClus; i++){
+
+				memset(fileName, 0, strlen(fileName));
+				offset = 32 * i;
+
+				if (!isValidEntry(content, offset)) continue;
+
+				if (isSearch && content[offset + 11] != 16){			//需要搜索并且是文件
+					tempi = 0;
+					for (int j = 0; j < 8; j++){
+						if (content[offset + j] != ' '){
+							fileName[tempi++] = content[offset + j];
+						}else{
+							break;
+						}
+					}
+					if(content[offset+8]!=' '){
+						fileName[tempi++] = '.';
+						for (int j = 8; j < 11; j++){
+							if (content[offset + j] != ' ')
+								fileName[tempi++] = content[offset + j];
+							else
+								break;
+						}
+					}
+					fileName[tempi] = '\0';
+					fileNameList.push_back(fileName);
+					int x = (int)content[offset+28];
+					x &= 0x000000ff;
+					fileSizeList.push_back(x);
+					int clus = (int)content[offset + 26];
+					clus += (int)content[offset + 27];
+					fileClusList.push_back(clus);
+				}
+				else if(!isSearch && content[offset + 11] == 16){			//该目录不需要搜索且是文件夹
+					tempi = 0;
+					for (int j = 0; j < 11; j++){
+						if (content[offset + j] != ' ') fileName[tempi++] = content[offset + j];
+						else break;
+					}
+					fileName[tempi] = '\0';
+					directoryIndexList.push_back(i);
+					directoryNameList.push_back(fileName);
+					int clus = (int)content[offset + 26];
+					clus += (int)content[offset + 27];
+					directoryClusList.push_back(clus);
+				}
+			}
+			if(isSearch){
+				for (int i = 0; i < fileNameList.size(); i++){
+					if (fileNameList[i].compare(fname) == 0){
+						isFound = true;
+						catFile(fat12, fileClusList[i], fileSizeList[i]);
+						break;
+					}
+				}
+			}
+			else{
+				for (int i = 0; i < directoryIndexList.size(); i++){
+					string directoryFullName = fullName + directoryNameList[i] + "/";
+					isFound |= catSub(fat12, directoryClusList[i], directoryFullName.c_str(), spath, fname);
+				}
+			}
+			free(clusData);
+		}
+	return isFound;
+
 }
 
 void catFile(FILE *fat12, int startClus, int fileSize){
@@ -326,6 +426,7 @@ void catFile(FILE *fat12, int startClus, int fileSize){
 		free(clusData);	
 	}	
 	aprint(result, COLOR_WHITE);
+	aprint("\n", COLOR_WHITE);
 	free(result);
 }
 
@@ -426,11 +527,14 @@ void printRoot(FILE *fat12, RootEntry *rep, const char *spath, int isDetail){
 		offset = directoryIndexList[i] * 32;
 		fillRootEntry(fat12, rep, base, offset);
 		string directoryFullName = fullName + directoryNameList[i] + "/";
-		printSub(fat12, directoryFullName.c_str(), rep->DIR_FstClus, spath, isDetail);
-	}	
+		isPrint |= printSub(fat12, directoryFullName.c_str(), rep->DIR_FstClus, spath, isDetail);
+	}
+
+	if (!isPrint)
+		aprint(MSG_INVALID_DIRECTORY, COLOR_WHITE);
 }
 
-void printSub(FILE *fat12, const char *fullName, int startClus, const char *spath, int isDetail){
+bool printSub(FILE *fat12, const char *fullName, int startClus, const char *spath, int isDetail){
 	//数据区的第一个簇（即2号簇）的偏移字节
 	//公式之所以在分子上加上(BPB_BytsPerSec–1)，是为了保证根目录区没有填满整数个扇区时仍然适用。
 	int dataBase = BytsPerSec * (RsvdSecCnt + FATSz * NumFATs + (RootEntCnt * 32 + BytsPerSec - 1) / BytsPerSec);
@@ -460,7 +564,7 @@ void printSub(FILE *fat12, const char *fullName, int startClus, const char *spat
 			isPrint = true;
 		}
 		else{
-			return;
+			return false;
 		}
 	}
 
@@ -549,11 +653,11 @@ void printSub(FILE *fat12, const char *fullName, int startClus, const char *spat
 
 	currentClus = value;
 	for (int i = 0; i < directoryIndexList.size(); i++){
-		offset = directoryIndexList[i] * 32;
 		string dFullName = fullName + directoryNameList[i] + "/";
-		printSub(fat12, dFullName.c_str(), directoryClusList[i], spath, isDetail);
+		isPrint |= printSub(fat12, dFullName.c_str(), directoryClusList[i], spath, isDetail);
 	}
 	
+	return isPrint;
 }
 
 int  getFATValue(FILE * fat12 , int num) {
