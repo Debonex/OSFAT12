@@ -347,6 +347,9 @@ bool catSub(FILE *fat12, int startClus, const char *fullName, const char *spath,
 					fileNameList.push_back(fileName);
 					int x = (int)content[offset+28];
 					x &= 0x000000ff;
+					int y = (int)content[offset+29];
+					y &= 0x000000ff;
+					x += y*256;
 					fileSizeList.push_back(x);
 					int clus = (int)content[offset + 26];
 					clus += (int)content[offset + 27];
@@ -611,6 +614,7 @@ bool printSub(FILE *fat12, const char *fullName, int startClus, const char *spat
 				fileNameList.push_back(fileName);
 				int x = (int)content[offset+28];
 				x &= 0x000000ff;
+				x += (((int)content[offset + 29]) & 0x000000ff) * 256;
 				fileSizeList.push_back(x);
 			}
 			else{										//文件夹
